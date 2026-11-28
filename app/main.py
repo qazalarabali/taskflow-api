@@ -1,7 +1,11 @@
 
-from fastapi import FastAPI, status, HTTPException
+from fastapi import FastAPI, status, HTTPException, Depends
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from sqlalchemy import text
+from app.database import engine, Base, get_db
+from app import models
 
 # CONFIGURATION
 app = FastAPI(
@@ -9,6 +13,8 @@ app = FastAPI(
     description="A Task Management REST API",
     version="1.0.0"
 )
+
+Base.metadata.create_all(bind=engine)
 
 # SCHEMAS
 class TaskCreate(BaseModel):
@@ -22,7 +28,7 @@ class TaskUpdate(BaseModel):
     completed: bool
 
 # DATABASE
-tasks_db = []
+# tasks_db = []
 
 # ENDPOINTS
 @app.get("/")
@@ -47,24 +53,29 @@ def about():
     }
 
 @app.post("/tasks", status_code=status.HTTP_201_CREATED)
-def create_task(task: TaskCreate):
-    task_data = task.model_dump()
-    task_data["id"] = max(
-        (item["id"] for item in tasks_db),
-        default=0
-    ) + 1
+def create_task(task: TaskCreate, db: Session = Depends(get_db)):
+    db_task = models.Task(**task.model_dump())
 
-    tasks_db.append(task_data)
+    db.add(db_task)
+    db.commit()
+    db.refresh(db_task)
 
     return {
         "message": "Task created successfully",
-        "task": task_data
+        "task": {
+            "id": db_task.id,
+            "title": db_task.title,
+            "description": db_task.description,
+            "completed": db_task.completed
+        }
     }
 
 @app.get("/tasks")
-def get_tasks():
+def get_tasks(db: Session = Depends(get_db)):
+    tasks = db.query(models.Task).all()
+
     return {
-        "tasks": tasks_db
+        "tasks": tasks
     }
 
 @app.get("/tasks/{task_id}")
@@ -117,3 +128,14 @@ def delete_task(task_id: int):
         status_code=status.HTTP_404_NOT_FOUND,
         detail="Task not found"
     )
+
+# DATABASE CHECK
+@app.get("/db-check")
+def database_check():
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+
+    return {
+        "database": "connected",
+        "status": "success"
+    }
