@@ -1,8 +1,8 @@
 
+# IMPORTS
 from fastapi import FastAPI, status, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-
 from sqlalchemy import text
 from app.database import engine, Base, get_db
 from app import models
@@ -14,9 +14,12 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# DATABASE INITIALIZATION
+# Create database tables based on the defined SQLAlchemy models.
 Base.metadata.create_all(bind=engine)
 
 # SCHEMAS
+# Define the structure and validation rules for incoming task data.
 class TaskCreate(BaseModel):
     title: str
     description: str
@@ -27,10 +30,10 @@ class TaskUpdate(BaseModel):
     description: str
     completed: bool
 
-# DATABASE
-# tasks_db = []
-
 # ENDPOINTS
+# Basic API endpoints for project information and health checks.
+
+# ROOT
 @app.get("/")
 def root():
     return {
@@ -38,12 +41,14 @@ def root():
         "status": "success"
     }
 
+# HEALTH CHECK
 @app.get("/health")
 def health_check():
     return {
         "status": "healthy"
     }
-
+    
+# ABOUT
 @app.get("/about")
 def about():
     return {
@@ -52,6 +57,10 @@ def about():
         "description": "Task Management Backend"
     }
 
+# TASK ENDPOINTS
+# CRUD operations for managing tasks in PostgreSQL.
+
+# CREATE TASK
 @app.post("/tasks", status_code=status.HTTP_201_CREATED)
 def create_task(task: TaskCreate, db: Session = Depends(get_db)):
     db_task = models.Task(**task.model_dump())
@@ -70,6 +79,7 @@ def create_task(task: TaskCreate, db: Session = Depends(get_db)):
         }
     }
 
+# GET ALL TASKS
 @app.get("/tasks")
 def get_tasks(db: Session = Depends(get_db)):
     tasks = db.query(models.Task).all()
@@ -78,58 +88,70 @@ def get_tasks(db: Session = Depends(get_db)):
         "tasks": tasks
     }
 
+# GET SINGLE TASK
 @app.get("/tasks/{task_id}")
-def get_task(task_id: int):
-    task = next(
-        (item for item in tasks_db if item["id"] == task_id),
-        None
-    )
+def get_task(task_id: int, db: Session = Depends(get_db)):
+    db_task = db.get(models.Task, task_id)
 
-    if task is None:
+    if db_task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found"
         )
 
     return {
-        "task": task
+        "task": db_task
     }
 
+# UPDATE TASK
 @app.put("/tasks/{task_id}")
-def update_task(task_id: int, task: TaskUpdate):
-    for index, existing_task in enumerate(tasks_db):
-        if existing_task["id"] == task_id:
-            updated_task = task.model_dump()
-            updated_task["id"] = task_id
+def update_task(
+    task_id: int,
+    task: TaskUpdate,
+    db: Session = Depends(get_db)
+):
+    db_task = db.get(models.Task, task_id)
 
-            tasks_db[index] = updated_task
+    if db_task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
 
-            return {
-                "message": "Task updated successfully",
-                "task": updated_task
-            }
+    task_data = task.model_dump()
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Task not found"
-    )
+    for key, value in task_data.items():
+        setattr(db_task, key, value)
 
+    db.commit()
+    db.refresh(db_task)
+
+    return {
+        "message": "Task updated successfully",
+        "task": db_task
+    }
+
+# DELETE TASK
 @app.delete(
     "/tasks/{task_id}",
     status_code=status.HTTP_204_NO_CONTENT
 )
-def delete_task(task_id: int):
-    for index, task in enumerate(tasks_db):
-        if task["id"] == task_id:
-            tasks_db.pop(index)
-            return
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    db_task = db.get(models.Task, task_id)
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Task not found"
-    )
+    if db_task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    db.delete(db_task)
+    db.commit()
+
+    return
 
 # DATABASE CHECK
+# Verify the connection between FastAPI and PostgreSQL.
 @app.get("/db-check")
 def database_check():
     with engine.connect() as connection:
